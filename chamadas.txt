@@ -1,0 +1,14 @@
+
+http localhost:9999/actuator/health
+
+http localhost:9999/clientes/1/extrato
+
+http localhost:9999/clientes/2/extrato
+
+http localhost:9999/clientes
+
+http localhost:9999/clientes-total
+
+http post localhost:9999/clientes/1/transacoes valor=1 tipo=c descricao=credito
+
+http post localhost:9999/clientes/1/transacoes valor=1 tipo=d descricao=debito

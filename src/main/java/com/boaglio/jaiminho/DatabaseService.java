@@ -5,8 +5,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.sql.Connection;
-import java.sql.SQLException;
+import java.sql.*;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -16,13 +15,15 @@ public class DatabaseService {
 
     private static final HikariDataSource dataSource;
 
-    static final int CONNECTION_POOL_SIZE = 20;
+    static final int MAX_CONNECTION_POOL_SIZE = 30;
     static final String DEBITO = "d";
-    static final  String JDBC_URL = "jdbc:h2:tcp://localhost/rinha";
-    static final String QUERY_FIND_CLIENTE_BY_ID = "SELECT limite, saldo FROM cliente WHERE id = ?";
-    static final String QUERY_FIND_TRANSACAO_BY_CLIENTE_ID = "SELECT id, cliente_id, valor, tipo, descricao, realizadaEm FROM transacao WHERE cliente_id = ? ORDER BY realizadaEm DESC LIMIT 10";
-    static final String INSERT_TRANSACAO = "INSERT INTO transacao (cliente_id, valor, tipo, descricao, realizadaEm) VALUES (?, ?, ?, ?, ?)";
+//    static final  String JDBC_URL = "jdbc:h2:tcp://localhost/rinha";
+    static final  String JDBC_URL = "jdbc:postgresql://localhost:5432/rinhadepostgres?user=admin&password=rinha";
+    static final String QUERY_FIND_CLIENTE_BY_ID = "SELECT limite, saldo FROM cliente WHERE id = ? FOR UPDATE";
+    static final String QUERY_FIND_TRANSACAO_BY_CLIENTE_ID = "SELECT id, cliente_id, valor, tipo, descricao, realizada_em FROM transacao WHERE cliente_id = ? ORDER BY realizada_em DESC LIMIT 10";
+    static final String INSERT_TRANSACAO = "INSERT INTO transacao (cliente_id, valor, tipo, descricao, realizada_em) VALUES (?, ?, ?, ?, ?)";
     static final String UPDATE_SALDO_CLIENTE = "UPDATE cliente SET saldo = ? WHERE id = ?";
+    public static final String SQL_DATABASE_VERSION = "SELECT version()";
     static long contador = 0L;
 
     static Logger log = LoggerFactory.getLogger(DatabaseService.class.getSimpleName());
@@ -30,7 +31,9 @@ public class DatabaseService {
     static {
         var config = new HikariConfig();
         config.setJdbcUrl(JDBC_URL);
-        config.setMaximumPoolSize(CONNECTION_POOL_SIZE);
+        config.setMaximumPoolSize(MAX_CONNECTION_POOL_SIZE);
+        config.setAutoCommit(false);
+        config.setTransactionIsolation("TRANSACTION_READ_COMMITTED");
 
         dataSource = new HikariDataSource(config);
     }
@@ -67,7 +70,7 @@ public class DatabaseService {
                         var valor = resultSet.getLong("valor");
                         var tipo = resultSet.getString("tipo");
                         var descricao = resultSet.getString("descricao");
-                        var realizadaEm = resultSet.getString("realizadaEm");
+                        var realizadaEm = resultSet.getString("realizada_em");
                         var transacao = new Transacao(valor, tipo, descricao, realizadaEm);
                         transactions.add(transacao);
                     }
@@ -94,18 +97,17 @@ public class DatabaseService {
             if (DEBITO.equals(tipo)) {
                 if ((saldoAtual + limiteDoCliente) >= valorDaTransacao) {
                     saldoAtual -= valorDaTransacao;
-                    log.info(++contador + " Debito: " + valorDaTransacao + " saldo: " + saldoAtual + " limite: " + limiteDoCliente + " - cliente: " + clientId);
+ //                   log.info(++contador + " Debito: " + valorDaTransacao + " saldo: " + saldoAtual + " limite: " + limiteDoCliente + " - cliente: " + clientId);
                 } else {
-                    log.info(++contador + " Sem saldo - cliente: " + clientId);
+     //               log.info(++contador + " Sem saldo - cliente: " + clientId);
                     throw new SemSaldoException();
                 }
             } else {
                 // credito
                 saldoAtual+=valorDaTransacao;
-                log.info(++contador + " Credito - cliente: " + valorDaTransacao + " saldo: "+ saldoAtual + " limite: " +limiteDoCliente +  "- cliente: "+clientId);
+ //               log.info(++contador + " Credito - cliente: " + valorDaTransacao + " saldo: "+ saldoAtual + " limite: " +limiteDoCliente +  "- cliente: "+clientId);
             }
-            // cadastra transacao
-            log.info("ID: " + clientId + ", Limite: " + limiteDoCliente + ", Saldo: " + saldoAtual);
+            // cadastra transacao/
             var statement = connection.prepareStatement(INSERT_TRANSACAO);
             statement.setLong(1, clientId);
             statement.setLong(2, valorDaTransacao);
@@ -129,13 +131,25 @@ public class DatabaseService {
         return null;
     }
 
-    private static Connection getConnection()   {
+    public String getVersion() {
+        String version = null;
+        try (var connection = getConnection();
+             var statement = connection.createStatement();
+             var resultSet = statement.executeQuery(SQL_DATABASE_VERSION)) {
+            if (resultSet.next()) {
+                version = resultSet.getString(1);
+            }
+        } catch (SQLException e) {
+            log.info("SQL error!: "+e.getMessage());
+        }
+        return version;
+    }
+
+    private Connection getConnection()   {
         try {
             //  sem connection pool
             //   return DriverManager.getConnection(JDBC_URL);
-            var connection =  dataSource.getConnection();
-            connection.setAutoCommit(false);
-            return connection;
+            return dataSource.getConnection();
         } catch (SQLException e) {
             throw new RuntimeException(e);
         }

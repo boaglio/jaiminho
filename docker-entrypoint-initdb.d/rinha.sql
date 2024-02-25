@@ -1,3 +1,5 @@
+# H2 database script
+
 CREATE TABLE cliente (
   id integer,
   limite integer,

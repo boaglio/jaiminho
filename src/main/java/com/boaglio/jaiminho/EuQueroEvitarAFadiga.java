@@ -16,6 +16,8 @@ public class EuQueroEvitarAFadiga {
 
     public static final int MAX_SIZE_DESCRICAO = 10;
     public static final String CONTENT_TYPE = "Content-Type";
+
+    public static final String APPLICATION_JSON = "application/json";
     public static final int STATUS_OK = 200;
     public static final int STATUS_INVALID = 422;
     public static final int STATUS_NOT_FOUND = 404;
@@ -29,16 +31,19 @@ public class EuQueroEvitarAFadiga {
     static Logger log = LoggerFactory.getLogger(EuQueroEvitarAFadiga.class.getSimpleName());
     public static void main(String[] args) throws IOException {
 
+        var serverPortEnv = System.getenv("SERVER_PORT");
         var porta = DEFAULT_HTTP_PORT;
-        if (args.length>0) {
-            porta = Integer.parseInt(args[0]);
+        if (Objects.nonNull(serverPortEnv) ) {
+            porta = Integer.parseInt(serverPortEnv);
         }
         var server = HttpServer.create(new InetSocketAddress(porta), 0);
         server.createContext("/clientes", new ClientHandler());
+        server.createContext("/actuator", new StatusHandler());
         server.setExecutor(Executors.newCachedThreadPool());
         server.start();
 
-        log.info("Server is listening on port "+porta);
+        var databaseService = new DatabaseService();
+        var version = databaseService.getVersion();
         log.info("-----------------------------------------------------------");
         log.info("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿");
         log.info("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁⠀⠀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿");
@@ -56,24 +61,46 @@ public class EuQueroEvitarAFadiga {
         log.info("⣿⣿⣿⣿⣿⣿⣿⡁⠀⣠⣾⣿⣿⣿⣿⣿⣿⣷⡄⠀⣸⣿⣿⣿⣿⣿⣿⣿⣿⣿");
         log.info("⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿");
         log.info("-----------------------------------------------------------");
-        log.info("Corre Jaiminho!");
+        log.info("Banco de dados: "+version);
+        log.info("-----------------------------------------------------------");
+        log.info("HTTP escutando na porta "+porta);
+        log.info("-----------------------------------------------------------");
+        log.info(" Corre Jaiminho !!! ");
         log.info("-----------------------------------------------------------");
     }
 
-    static class ClientHandler implements HttpHandler {
+    static class StatusHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            var path = exchange.getRequestURI().getPath();
+            var method = exchange.getRequestMethod();
+            if (method.equalsIgnoreCase(METHOD_GET) && path.matches("^/actuator/health$")) {
+    //            log.info((++contador) + " GET  PATH:  " + path);
+                var response = "{\"status\":\"up\"}";
+                exchange.getResponseHeaders().set(CONTENT_TYPE, APPLICATION_JSON);
+                exchange.sendResponseHeaders(STATUS_OK, response.getBytes().length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(response.getBytes());
+                }
+            }
+        }
+    }
 
-        public static final String APPLICATION_JSON = "application/json";
+    static class ClientHandler implements HttpHandler {
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             var path = exchange.getRequestURI().getPath();
             var method = exchange.getRequestMethod();
             if (method.equalsIgnoreCase(METHOD_POST) && path.matches("^/clientes/\\d+/transacoes$")) {
+    //            log.info( (++contador) + " POST PATH:  "+path);
                 handlePostTransaction(exchange);
             } else if (method.equalsIgnoreCase(METHOD_GET) && path.matches("^/clientes/\\d+/extrato$")) {
+     //           log.info( (++contador) + " GET  PATH:  "+path);
                 handleGetClient(exchange);
             } else {
-                exchange.sendResponseHeaders(STATUS_NOT_FOUND, EMPTY_RESPONSE_LENGTH); // Not Found
+      //          log.info( (++contador) + " Not Found PATH:  "+path);
+                exchange.sendResponseHeaders(STATUS_NOT_FOUND, EMPTY_RESPONSE_LENGTH);
             }
         }
 
@@ -83,6 +110,14 @@ public class EuQueroEvitarAFadiga {
             String id;
             if (parts.length >= 3) {
                 id = parts[2];
+                if (Objects.isNull(id)||
+                        id.isEmpty() ||
+                        Cliente.invalidCustomer(Integer.parseInt(id))
+                ) {
+                    // log.info(contador+" GET Client Not Found ! ");
+                    exchange.sendResponseHeaders(STATUS_NOT_FOUND, EMPTY_RESPONSE_LENGTH);
+                    return;
+                }
                 var databaseService = new DatabaseService();
                 var clienteArmazenado = databaseService.findById(Integer.parseInt(id));
                 var transacoes = databaseService.getLast10transactions(Integer.parseInt(id));
@@ -122,12 +157,12 @@ public class EuQueroEvitarAFadiga {
             } else {
                 exchange.sendResponseHeaders(STATUS_BAD_REQUEST, EMPTY_RESPONSE_LENGTH); // Bad Request
             }
+            // log.info(contador+" GET Ok ");
         }
 
         private void handlePostTransaction(HttpExchange exchange) throws IOException {
 
             var path = exchange.getRequestURI().getPath();
-      //      log.info(" Input PATH:  "+path);
             var parts = path.split("/");
             var  id = parts[2];
 
@@ -138,17 +173,22 @@ public class EuQueroEvitarAFadiga {
                     requestBody.append(line);
                 }
             }
-        //    log.info(" Input POST:  "+requestBody);
+            // log.info( contador + " POST  Input:  "+requestBody);
             long valorDaTransacao;
             String tipo;
             String descricao;
             try {
                 var jsonBody = new JSONObject(requestBody.toString());
                 valorDaTransacao = jsonBody.getLong("valor");
+                var valorDaTransacaoDouble = jsonBody.getDouble("valor");
+                if (valorDaTransacaoDouble>valorDaTransacao) {
+                    // se mandar valor quebrado
+                    throw  new JSONException("invalid valor");
+                }
                 tipo = jsonBody.getString("tipo");
                 descricao = jsonBody.getString("descricao");
             } catch  (JSONException je) {
-                log.info(++contador+" Invalid request ! ");
+                // log.info(contador+" POST Invalid JSON request  ! ");
                 exchange.sendResponseHeaders(STATUS_INVALID, EMPTY_RESPONSE_LENGTH);
                 return;
             }
@@ -158,7 +198,7 @@ public class EuQueroEvitarAFadiga {
                     Objects.isNull(descricao)|| descricao.isEmpty() || descricao.length()> MAX_SIZE_DESCRICAO ||    // descricao
                     valorDaTransacao <= 0 // somente valores positivos
             ) {
-                log.info(++contador+" Invalid request ! ");
+                // log.info(contador+" POST Invalid request ! ");
                 exchange.sendResponseHeaders(STATUS_INVALID, EMPTY_RESPONSE_LENGTH);
                 return;
             }
@@ -171,6 +211,7 @@ public class EuQueroEvitarAFadiga {
                 exchange.sendResponseHeaders(STATUS_OK, response.getBytes().length);
             } catch (SemSaldoException e) {
                  // sem saldo
+                // log.info(contador+" sem saldo ! ");
                 exchange.sendResponseHeaders(STATUS_INVALID, EMPTY_RESPONSE_LENGTH);
                 return;
             }
@@ -178,7 +219,7 @@ public class EuQueroEvitarAFadiga {
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(response.getBytes());
             }
-
+            // log.info(contador+" POST Ok ");
         }
     }
 }

@@ -1,6 +1,6 @@
 # jaiminho
 
-![jaiminho.png](jaiminho.png])
+![jaiminho.png](jaiminho.png)
 
 Rinha #2 - https://github.com/zanfranceschi/rinha-de-backend-2024-q1
 
